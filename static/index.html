@@ -1,0 +1,255 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Models creator</title>
+<script>
+  try {
+    var t = localStorage.getItem('theme') || 'dark';
+    if (t === 'system') t = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+    document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="icon" href="/static/icon.png">
+</head>
+<body>
+<header>
+  <div class="brand">U-Net <span>512×512</span></div>
+  <nav id="tabs">
+    <button data-tab="data" class="active">Data</button>
+    <button data-tab="annotate">Annotation</button>
+    <button data-tab="train">Training</button>
+    <button data-tab="infer">Inference</button>
+    <button data-tab="info">Info</button>
+    <button data-tab="settings">Settings</button>
+  </nav>
+  <div id="device" class="muted"></div>
+  <button id="quit" title="Stop the server and close this window">⏻ Quit</button>
+</header>
+
+<!-- ======================= DATA ======================= -->
+<section id="tab-data" class="tab active">
+  <div class="drop big" id="data-drop">
+    <div class="drop-title">Drop a folder here</div>
+    <div class="muted">It should contain <b>imgs/</b> and <b>masks/</b>, or images only
+      (black masks will be created).<br>Images are resized to 512×512.</div>
+    <label class="btn">Choose a folder…<input type="file" id="data-pick" webkitdirectory multiple hidden></label>
+  </div>
+  <div id="import-progress" class="progress hidden"><div class="bar"></div><span></span></div>
+  <h2>Datasets</h2>
+  <div id="dataset-list" class="cards"></div>
+</section>
+
+<!-- ======================= ANNOTATION ======================= -->
+<section id="tab-annotate" class="tab">
+  <div class="annot">
+    <aside class="side">
+      <select id="an-dataset"></select>
+      <div class="row small">
+        <label><input type="checkbox" id="an-only-empty"> not annotated</label>
+        <span id="an-count" class="muted"></span>
+      </div>
+      <div id="an-list" class="thumbs"></div>
+      <div class="drop small-drop" id="an-drop">+ Drop images</div>
+    </aside>
+
+    <div class="editor-wrap">
+      <div class="toolbar">
+        <div class="group" id="tools">
+          <button data-tool="brush" class="active" title="Brush (B), Shift = erase">✎ Brush</button>
+          <button data-tool="eraser" title="Eraser (E)">⌫ Eraser</button>
+          <button data-tool="polygon" title="Polygon (P): click to add points, double-click or Enter to close, Shift = erase">⬠ Polygon</button>
+          <button data-tool="rect" title="Rectangle (R), Shift = erase">▭ Rectangle</button>
+          <button data-tool="fill" title="Fill (F): fills the clicked area, Shift = empty it">◧ Fill</button>
+          <button data-tool="pan" title="Pan (hold Space)">✥</button>
+        </div>
+        <div class="group">
+          <label title="Brush size ([ and ])">Size <input type="range" id="brush-size" min="1" max="120" value="20"><span id="brush-size-v">20</span></label>
+          <label>Opacity <input type="range" id="mask-opacity" min="0" max="100" value="50"></label>
+          <input type="color" id="mask-color" value="#ff2d55" title="Mask color">
+          <label title="Show the mask (H)"><input type="checkbox" id="mask-visible" checked> mask</label>
+          <label title="Outline only (O)"><input type="checkbox" id="mask-outline"> outline</label>
+        </div>
+        <div class="group">
+          <button id="undo" title="Undo (Ctrl+Z)">↶</button>
+          <button id="redo" title="Redo (Ctrl+Y)">↷</button>
+          <button id="invert" title="Invert the mask">◐</button>
+          <button id="clear" title="Erase the whole mask">✕ Clear</button>
+          <button id="fit" title="Fit to window (0)">⤢</button>
+          <button id="save" class="primary" title="Save (Ctrl+S)">Save</button>
+        </div>
+      </div>
+      <div id="stage">
+        <div id="canvases">
+          <canvas id="img-canvas" width="512" height="512"></canvas>
+          <canvas id="mask-canvas" width="512" height="512"></canvas>
+          <canvas id="ui-canvas" width="512" height="512"></canvas>
+        </div>
+        <div id="cursor"></div>
+        <div id="stage-empty" class="muted">Choose a dataset in the Data tab.</div>
+      </div>
+      <div class="statusbar">
+        <button id="prev" title="Previous image (←, A)">◀</button>
+        <span id="an-name"></span>
+        <button id="next" title="Next image (→, D)">▶</button>
+        <span id="an-dirty" class="muted"></span>
+        <span class="spacer"></span>
+        <button id="delete-item" class="danger" title="Remove this image from the dataset">Delete image</button>
+        <span class="muted" id="an-pos"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ======================= TRAINING ======================= -->
+<section id="tab-train" class="tab">
+  <div class="train">
+    <form id="train-form" class="panel">
+      <h2>New training</h2>
+      <div class="small muted" id="tr-framework"></div>
+      <label>Dataset <select name="dataset" id="tr-dataset"></select></label>
+      <label>Model name <input name="model_name" id="tr-name" required></label>
+      <div class="two">
+        <label>Epochs <input type="number" name="epochs" value="30" min="1"></label>
+        <label>Batch size <input type="number" name="batch_size" value="4" min="1" max="64"></label>
+      </div>
+      <div class="two">
+        <label>Learning rate <input type="number" name="lr" value="0.001" step="0.0001" min="0.00001"></label>
+        <label>Validation split <input type="number" name="val_split" value="0.2" step="0.05" min="0" max="0.9"></label>
+      </div>
+      <div class="two">
+        <label title="Filters of the first level, doubled at each level">Base filters
+          <select name="base"><option>8</option><option selected>16</option><option>32</option><option>64</option></select></label>
+        <label title="Number of downsamplings (4: 512 → 32)">Depth
+          <select name="depth"><option>3</option><option selected>4</option><option>5</option></select></label>
+      </div>
+      <label class="check"><input type="checkbox" name="augment" checked> Augmentation (rotations, flips, brightness)</label>
+      <label class="check"><input type="checkbox" name="only_annotated" checked> Annotated images only</label>
+      <div class="row">
+        <button type="submit" class="primary" id="tr-start">Start</button>
+        <button type="button" id="tr-stop" class="danger" disabled>Stop</button>
+      </div>
+      <div id="tr-msg" class="msg"></div>
+    </form>
+
+    <div class="panel grow">
+      <div id="tr-status" class="status-line muted">No training running.</div>
+      <div id="tr-progress" class="progress"><div class="bar"></div><span></span></div>
+      <div class="metrics" id="tr-metrics"></div>
+      <div class="charts">
+        <div class="chart"><h3>Loss</h3><canvas id="ch-loss"></canvas></div>
+        <div class="chart"><h3>Accuracy</h3><canvas id="ch-accuracy"></canvas></div>
+        <div class="chart"><h3>Recall</h3><canvas id="ch-recall"></canvas></div>
+      </div>
+      <div class="legend"><span class="sw train"></span> training <span class="sw val"></span> validation</div>
+    </div>
+  </div>
+  <h2>Models</h2>
+  <div id="model-list" class="cards"></div>
+</section>
+
+<!-- ======================= INFERENCE ======================= -->
+<section id="tab-infer" class="tab">
+  <div class="infer-top">
+    <div class="drop" id="model-drop">
+      <div class="drop-title">1. Model</div>
+      <select id="inf-model"></select>
+      <div class="muted">or drop a model file here<br><b>.pt</b> (PyTorch) · <b>.keras</b> / <b>.h5</b> (TensorFlow)</div>
+      <label class="btn">Choose a model…<input type="file" id="model-pick" accept=".pt,.pth,.keras,.h5" hidden></label>
+    </div>
+    <div class="drop" id="img-drop">
+      <div class="drop-title">2. Images to test</div>
+      <div class="muted">Drop images or a folder</div>
+      <label class="btn">Choose images…<input type="file" id="img-pick" accept="image/*,.tif,.tiff" multiple hidden></label>
+      <label class="small">Threshold <input type="range" id="inf-threshold" min="0.05" max="0.95" step="0.05" value="0.5"><span id="inf-threshold-v">0.50</span></label>
+    </div>
+  </div>
+  <div id="inf-progress" class="progress hidden"><div class="bar"></div><span></span></div>
+
+  <div class="view-bar">
+    <div class="group seg" id="inf-mode">
+      <button data-mode="mosaic" class="active">Mosaic</button>
+      <button data-mode="column">Stacked</button>
+    </div>
+    <label>Size <input type="range" id="inf-size" min="120" max="1200" value="260"><span id="inf-size-v"></span></label>
+    <label>Opacity <input type="range" id="inf-opacity" min="0" max="100" value="50"></label>
+    <input type="color" id="inf-color" value="#00e0ff" title="Mask color">
+    <div class="group seg" id="inf-show">
+      <button data-show="overlay" class="active">Overlay</button>
+      <button data-show="mask">Mask</button>
+      <button data-show="image">Image</button>
+    </div>
+    <span class="spacer"></span>
+    <span id="inf-count" class="muted"></span>
+    <button id="inf-zip">Download (zip)</button>
+    <button id="inf-to-ds" title="Copy images and predicted masks into a dataset, to correct them in Annotation">→ Dataset</button>
+    <button id="inf-clear">Clear</button>
+  </div>
+  <div id="inf-results" class="mosaic"></div>
+</section>
+
+<!-- ======================= INFO ======================= -->
+<section id="tab-info" class="tab">
+  <div class="info-grid">
+    <div class="panel" id="info-framework"></div>
+    <div class="panel" id="info-system"></div>
+  </div>
+  <h2>GPU</h2>
+  <div id="info-gpus" class="info-grid"></div>
+  <h2>Libraries</h2>
+  <div class="panel"><table class="kv libs" id="info-libs"></table></div>
+</section>
+
+<!-- ======================= SETTINGS ======================= -->
+<section id="tab-settings" class="tab">
+  <div class="settings">
+    <div class="panel">
+      <h2>Appearance</h2>
+      <div class="setting">
+        <div><div class="s-title">Theme</div><div class="muted small">Colors of the whole interface.</div></div>
+        <div class="group seg" id="set-theme">
+          <button data-v="dark">Dark</button>
+          <button data-v="light">Light</button>
+          <button data-v="system">Like Windows</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Framework</h2>
+      <div class="muted small">Used for new trainings. Models already trained keep their framework,
+        and Inference opens both kinds (.pt and .keras).</div>
+      <div id="set-frameworks" class="fw-cards"></div>
+    </div>
+
+    <div class="panel">
+      <h2>Computation</h2>
+      <div class="setting">
+        <div><div class="s-title">Device</div><div class="muted small">Auto uses a GPU when the framework can.</div></div>
+        <div class="group seg" id="set-device">
+          <button data-v="auto">Auto</button>
+          <button data-v="cpu">CPU only</button>
+        </div>
+      </div>
+      <div class="setting">
+        <div><div class="s-title">CPU threads</div>
+          <div class="muted small" id="set-threads-help">0 = framework default.</div></div>
+        <div class="group"><input type="number" id="set-threads" min="0" max="256" step="1" style="width:80px"></div>
+      </div>
+      <div class="muted small" id="set-restart-note"></div>
+    </div>
+  </div>
+</section>
+
+<div id="toast"></div>
+<script src="/static/common.js"></script>
+<script src="/static/data.js"></script>
+<script src="/static/annotate.js"></script>
+<script src="/static/train.js"></script>
+<script src="/static/infer.js"></script>
+<script src="/static/info.js"></script>
+<script src="/static/settings.js"></script>
+</body>
+</html>

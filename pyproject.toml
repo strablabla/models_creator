@@ -1,0 +1,17 @@
+[project]
+name = "models-creator"
+version = "0.1.0"
+description = "Annotate images, train U-Net segmentation models on 512x512 images and test them"
+requires-python = ">=3.11,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.30",
+    "python-multipart>=0.0.9",
+    "pillow>=10.0",
+    "numpy>=1.26",
+    "torch>=2.3",
+    "tensorflow>=2.21.0",
+]
+
+[tool.uv]
+package = false
