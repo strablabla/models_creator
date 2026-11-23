@@ -1,118 +1,132 @@
 # Models creator
 
-Application FastAPI pour annoter des images, entraîner des modèles U-Net de segmentation
-(masque noir et blanc) sur des images 512×512, puis les tester.
+A FastAPI application to annotate images, train U-Net segmentation models (black and white
+masks) on 512×512 images, and test them, with PyTorch or TensorFlow.
 
-## Installer
+## Install
 
-Un seul fichier, le même pour Windows et Linux : **`install.cmd`**.
+One file, the same for Windows and Linux: **`install.cmd`**.
 
-- **Windows** : double-cliquer sur `install.cmd`.
-- **Linux** : dans un terminal, `sh install.cmd`.
+- **Windows**: double-click `install.cmd`.
+- **Linux**: in a terminal, `sh install.cmd`.
 
-Il installe [uv](https://docs.astral.sh/uv/) s'il manque, qui installe Python 3.12 et les
-bibliothèques dans `.venv` (quelques Go, surtout PyTorch et TensorFlow ; il faut Internet),
-puis il met une icône « Models creator » sur le Bureau et dans le menu des applications
-(menu Démarrer sous Windows), et propose de lancer l'application. Rien n'est installé en
-dehors de ce dossier, à part uv (dans `~/.local/bin`) et Python (dans le cache de uv).
+It installs [uv](https://docs.astral.sh/uv/) if it is missing. uv then installs Python 3.12
+and the libraries into `.venv`. This takes a few GB, mostly PyTorch and TensorFlow, and needs
+an Internet connection. The installer then puts a "Models creator" icon on the Desktop and in
+the applications menu (the Start menu on Windows), and offers to start the application.
+Nothing is installed outside this folder, except uv (in `~/.local/bin`) and Python (in uv's
+cache).
 
-On peut le relancer sans risque, par exemple après une mise à jour du dossier ou s'il a été
-déplacé : il remet les bibliothèques et les icônes à jour.
+It is safe to run it again, for example after updating the folder or moving it: it brings
+the libraries and the icons up to date.
 
-## Lancer et arrêter
+## Start and stop
 
-L'icône lance `launch.py` : il démarre le serveur sans fenêtre et ouvre la page dans le
-navigateur dès qu'il répond ; si l'application tourne déjà, il ouvre seulement la page. Les
-messages du serveur sont dans `logs/server.log`.
+The icon runs `launch.py`. It starts the server with no window and opens the page in the
+browser as soon as the server answers. If the application is already running, it only opens
+the page. The server's messages go to `logs/server.log`.
 
-Le bouton **Quit**, en haut à droite, arrête le serveur et ferme la fenêtre quand le
-navigateur le permet.
+The **Quit** button, at the top right, stops the server and closes the window when the
+browser allows it.
 
-Pour voir les messages du serveur en direct (s'il ne démarre pas) :
+To see the server's messages live, for example when it does not start:
 
 ```
 uv run launch.py --console
 ```
 
-puis ouvrir http://127.0.0.1:8765.
+then open http://127.0.0.1:8765.
 
-## Onglets (interface en anglais)
+## Tabs
 
-**Data** : déposer un dossier contenant `imgs/` et `masks/`. Les masques sont associés aux
-images par leur nom (`img1.png` ↔ `img1.png`, `img1_mask.png`, `img1_label.png`…). Un
-dossier qui ne contient que des images est accepté aussi : chaque image reçoit un masque noir.
-Les images sont ramenées à 512×512 ; tout pixel non noir d'un masque compte comme objet.
+**Data**: drop a folder containing `imgs/` and `masks/`. Masks are matched to images by
+name (`img1.png` ↔ `img1.png`, `img1_mask.png`, `img1_label.png`…). A folder that holds only
+images is accepted too: each image gets a black mask. Images are resized to 512×512, and
+every non-black pixel of a mask counts as object. `data_examples/` holds a folder of each
+kind to try it.
 
-**Annotation** : l'image et son masque superposés.
+**Annotation**: the image with its mask overlaid.
 
-| Outil | Touche | Usage |
+| Tool | Key | Use |
 |---|---|---|
-| Pinceau | B | Maj = effacer |
-| Gomme | E | |
-| Polygone | P | clic = sommet, double-clic ou Entrée = fermer, Retour arrière = retirer un sommet, Échap = annuler, Maj = effacer |
-| Rectangle | R | Maj = effacer |
-| Remplissage | F | remplit la zone cliquée, Maj = la vider |
-| Déplacer | Espace maintenu, ou clic droit / molette cliquée | |
+| Brush | B | Shift = erase |
+| Eraser | E | |
+| Polygon | P | click = add a point, double-click or Enter = close, Backspace = remove the last point, Esc = cancel, Shift = erase |
+| Rectangle | R | Shift = erase |
+| Fill | F | fills the clicked area, Shift = empties it |
+| Pan | hold Space, or right / middle button drag | |
 
-Molette : zoom. `[` `]` : taille du pinceau. H : masquer le masque. O : contour seul.
-Ctrl+Z / Ctrl+Y : annuler / rétablir. Ctrl+S : enregistrer (fait aussi automatiquement en
-changeant d'image). ← → ou A D : image précédente / suivante. 0 : ajuster à la fenêtre.
+Mouse wheel: zoom. `[` `]`: brush size. H: hide the mask. O: outline only.
+Ctrl+Z / Ctrl+Y: undo / redo. Ctrl+S: save (also done automatically when changing image).
+← → or A D: previous / next image. 0: fit to the window.
 
-**Training** : choix du jeu, des époques, de la taille de lot, du taux d'apprentissage, de
-la part de validation et de la taille du U-Net. Loss, Accuracy et Recall (ainsi que l'IoU ;
-la Precision est enregistrée dans le modèle) sont suivies en direct, en entraînement et en validation. Le meilleur modèle (plus
-petite loss de validation) est enregistré dans `data/models/<nom>.pt`.
+**Training**: choose the dataset, epochs, batch size, learning rate, validation split and
+U-Net size. Loss, Accuracy and Recall, as well as IoU, are followed live for training and
+validation. Precision is computed too and kept in the model file. The best model (lowest
+validation loss) is saved after each epoch that improves it, so stopping a training keeps
+the best model so far.
 
-**Inference** : choisir un modèle ou déposer un fichier `.pt`, puis déposer des images (de
-n'importe quelle taille : la prédiction est faite en 512×512 puis remise à la taille de
-l'image). Affichage en mosaïque, ou en hauteur avec une glissière avant/après ; taille des
-images réglable (curseur ou Ctrl + molette), opacité, couleur, seuil. Les résultats peuvent
-être téléchargés en zip, ou copiés dans un jeu de données pour être corrigés dans Annotation.
+**Inference**: choose a model, or drop a `.pt`, `.keras` or `.h5` file, then drop images.
+They can be of any size: the prediction is made at 512×512, then brought back to the image's
+size. Results show as a mosaic, or stacked with a before/after slider. Image size (slider or
+Ctrl + wheel), opacity, color and threshold can be adjusted. Results can be downloaded as a
+zip, or copied into a dataset to be corrected in Annotation.
 
-**Info** : le framework utilisé (PyTorch), sa version et son type de build (CPU ou CUDA),
-le périphérique de calcul et, s'il n'y a pas de GPU utilisé, pourquoi ; pour chaque GPU
-(via `nvidia-smi`) le nom, la VRAM utilisée et totale, la charge, la température, la
-consommation, les fréquences et le pilote, mis à jour toutes les 2 s ; le système (OS,
-processeur, RAM, Python) ; les versions des bibliothèques (TensorFlow, JAX, ONNX Runtime…
-si elles sont installées).
+**Info**: the framework in use and the other one, their versions and builds (CPU or CUDA),
+the compute device and, when no GPU is used, why. For each GPU (through `nvidia-smi`): name,
+VRAM used and total, load, temperature, power, clocks and driver, refreshed every 2 s. Also
+the system (OS, processor, RAM, Python) and the versions of the libraries (TensorFlow, JAX,
+ONNX Runtime… when installed).
 
-**Settings** : thème sombre, clair ou comme Windows ; framework des nouveaux entraînements,
-PyTorch (modèles `.pt`) ou TensorFlow / Keras (modèles `.keras`) — l'onglet Inference ouvre
-les deux, quel que soit ce réglage ; périphérique (auto ou CPU seulement) et nombre de threads
-CPU. Les réglages sont dans `data/settings.json`. TensorFlow ne lit le périphérique et les
-threads qu'à son premier chargement : après les avoir changés, relancer l'application.
+**Settings**: dark, light or system theme; the framework for new trainings, PyTorch (`.pt`
+models) or TensorFlow / Keras (`.keras` models), while Inference opens both whatever this
+setting; the device (auto or CPU only) and the number of CPU threads. Settings are kept in
+`data/settings.json`. TensorFlow reads the device and threads only when it is first loaded:
+after changing them, restart the application.
 
-## Fichiers
+## Where the models are
+
+In `data/models/`, named after the model name given in Training (by default
+`unet_<dataset>_<date>_<time>`):
+
+- PyTorch: one `.pt` file holding the weights, the architecture and the training history.
+- TensorFlow: a `.keras` file, with a `.json` file of the same name for the history and
+  scores.
+
+The **Download** button of each model card in Training saves a copy elsewhere. `data/`
+(datasets, models, results, settings) is not versioned.
+
+## Files
 
 ```
-install.cmd        l'installeur (Windows et Linux)
-launch.py          ce que lance l'icône
-app/main.py        routes FastAPI
-app/installer.py   crée les icônes (seconde moitié de install.cmd)
-app/storage.py     jeux de données sur disque
-app/unet.py        le modèle U-Net
-app/training.py    entraînement en arrière-plan et métriques
-app/tf_backend.py  le même U-Net, entraînement et prédiction en TensorFlow / Keras
-app/settings.py    réglages (data/settings.json)
-app/sysinfo.py     informations de l'onglet Info
-app/inference.py   chargement des modèles et prédiction
-static/            l'interface (HTML, CSS, JavaScript sans dépendance)
-data/              jeux de données, modèles, résultats (non versionné)
+install.cmd        the installer (Windows and Linux)
+launch.py          what the icon runs
+app/main.py        FastAPI routes
+app/installer.py   creates the icons (second half of install.cmd)
+app/storage.py     datasets and model files on disk
+app/unet.py        the U-Net model (PyTorch)
+app/training.py    background training and metrics
+app/tf_backend.py  the same U-Net, training and prediction in TensorFlow / Keras
+app/inference.py   loading models and predicting
+app/settings.py    settings (data/settings.json)
+app/sysinfo.py     what the Info tab shows
+static/            the interface (HTML, CSS, JavaScript with no dependency)
+data_examples/     example folders to drop in the Data tab
+data/              datasets, models, results (not versioned)
 ```
 
-Les modèles déposés sont lus sans exécuter de code : `torch.load(weights_only=True)` pour
-PyTorch (modèles de cette application, `state_dict` d'un U-Net de même architecture, ou
-TorchScript), `keras.models.load_model` en mode sûr pour les `.keras` / `.h5`.
+Dropped models are read without running code: `torch.load(weights_only=True)` for PyTorch
+(models from this application, the `state_dict` of a U-Net with the same architecture, or
+TorchScript), and `keras.models.load_model` in safe mode for `.keras` / `.h5`.
 
-## Calcul
+## Computation
 
-PyTorch est installé en version CPU. Sur CPU, garder un petit réseau (filtres de base 8 ou
-16). Mesuré sur ce poste, par image et par époque : 0,3 s avec 8 filtres, 0,6 s avec 16,
-1,5 s avec 32 (soit environ 1 min par époque pour 100 images avec 16 filtres). Pour utiliser une carte
-NVIDIA récente, installer la version CUDA de PyTorch ; l'application l'utilise alors
-automatiquement.
+On Windows, the PyTorch that gets installed is the CPU version. On a CPU, keep a small
+network (8 or 16 base filters). Measured on a Xeon W-2223, per image and per epoch: 0.3 s
+with 8 filters, 0.6 s with 16, 1.5 s with 32, so about 1 minute per epoch for 100 images
+with 16 filters. To use a recent NVIDIA card, install the CUDA version of PyTorch: the
+application then uses it automatically. On Linux, the default PyTorch is the CUDA version.
 
-TensorFlow n'utilise pas de GPU sous Windows natif depuis sa version 2.11 (seulement sous
-WSL2) : il calcule toujours sur CPU ici. Son premier chargement prend jusqu'à une
-demi-minute ; il n'est chargé que s'il est choisi dans Settings ou qu'un modèle `.keras` est
-utilisé.
+TensorFlow does not use GPUs on native Windows since version 2.11 (only under WSL2), so it
+always computes on the CPU there. Its first loading takes up to half a minute; it is loaded
+only when it is selected in Settings or a `.keras` model is used.
