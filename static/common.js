@@ -3,6 +3,8 @@ const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const enc = encodeURIComponent;
 const IMAGE_RE = /\.(png|jpe?g|tiff?|bmp|webp|gif)$/i;
+const IMG_DIRS = ['imgs', 'img', 'images', 'image'];
+const MASK_DIRS = ['masks', 'mask', 'labels', 'label', 'annotations', 'gt'];
 
 async function api(url, opts = {}) {
   const o = { ...opts };
@@ -109,11 +111,87 @@ function fmtDuration(s) {
 }
 
 // ---------- datasets list, shared by tabs ----------
-let DATASETS = [];
+let DATASETS = [], VOLUME_SETS = [];
 async function refreshDatasets() {
-  DATASETS = await api('/api/datasets');
+  [DATASETS, VOLUME_SETS] = await Promise.all([api('/api/datasets'), api('/api/volumes')]);
+  bus.emit('volumes', VOLUME_SETS);
   bus.emit('datasets', DATASETS);
   return DATASETS;
+}
+
+// ---------- 3D volumes ----------
+// A volume travels as raw uint8 bytes (Z, Y, X), gzip-compressed, its shape in X-Shape.
+async function fetchVolume(url) {
+  const r = await fetch(url, { cache: 'no-store' });
+  if (!r.ok) {
+    let msg = r.statusText;
+    try { msg = (await r.json()).detail; } catch (e) {}
+    throw new Error(msg);
+  }
+  const shape = r.headers.get('X-Shape').split(',').map(Number);
+  return { data: new Uint8Array(await r.arrayBuffer()), shape };
+}
+
+async function putVolume(url, bytes) {
+  let body = bytes, headers = { 'Content-Type': 'application/octet-stream' };
+  if (window.CompressionStream) {
+    body = await new Response(new Blob([bytes]).stream().pipeThrough(new CompressionStream('gzip'))).arrayBuffer();
+    headers['Content-Encoding'] = 'gzip';
+  }
+  return api(url, { method: 'PUT', body, headers });
+}
+
+// Dropped files of 3D volumes -> [{file, kind: 'img'|'mask', rel}], rel being
+// the path under imgs/ or masks/, or else under the dropped folder (keepRoot:
+// the whole path, so that a dropped folder of slices keeps its name).
+function classify3d(files, keepRoot = false) {
+  const out = [];
+  for (const f of files) {
+    if (!IMAGE_RE.test(f.path)) continue;
+    const parts = f.path.split('/');
+    const i = parts.slice(0, -1).findIndex(p => IMG_DIRS.includes(p.toLowerCase()) || MASK_DIRS.includes(p.toLowerCase()));
+    if (i >= 0) {
+      out.push({ file: f.file, kind: MASK_DIRS.includes(parts[i].toLowerCase()) ? 'mask' : 'img', rel: parts.slice(i + 1).join('/') });
+    } else {
+      out.push({ file: f.file, kind: 'img', rel: parts.length > 1 && !keepRoot ? parts.slice(1).join('/') : f.path });
+    }
+  }
+  return out;
+}
+
+// Uploads [{file, kind, rel}] in batches to url (FormData: files, kinds, paths).
+async function uploadBatches(url, entries, progressEl, label = 'Importing') {
+  const BATCH = 16, PARALLEL = 3, errors = [];
+  const batches = [];
+  for (let i = 0; i < entries.length; i += BATCH) batches.push(entries.slice(i, i + BATCH));
+  let done = 0, next = 0;
+  setProgress(progressEl, 0, entries.length, `${label}… 0 / ${entries.length}`);
+  async function worker() {
+    while (next < batches.length) {
+      const b = batches[next++];
+      const fd = new FormData();
+      for (const e of b) { fd.append('files', e.file, e.file.name); fd.append('kinds', e.kind || 'img'); fd.append('paths', e.rel); }
+      try { const r = await api(url, { method: 'POST', body: fd }); errors.push(...(r.errors || [])); }
+      catch (err) { errors.push(err.message); }
+      done += b.length;
+      setProgress(progressEl, done, entries.length, `${label}… ${done} / ${entries.length}`);
+    }
+  }
+  await Promise.all(Array.from({ length: PARALLEL }, worker));
+  return errors;
+}
+
+function looksLike3d(files) {
+  // slices in sub-folders of imgs/ (imgs/vol1/z001.png): volumes, not 2D images
+  return files.some(f => {
+    const parts = f.path.split('/').map(p => p.toLowerCase());
+    const i = parts.findIndex(p => IMG_DIRS.includes(p));
+    return i >= 0 && parts.length - i > 2;
+  });
+}
+
+function classColor(classes, k) {
+  return hexToRgb((classes[k - 1] && classes[k - 1].color) || '#ffffff');
 }
 
 function fillSelect(sel, values, current, empty = '—') {
@@ -132,7 +210,7 @@ function fillSelect(sel, values, current, empty = '—') {
   if (current != null && values.some(v => (v.value ?? v) === current)) sel.value = current;
 }
 
-const FRAMEWORK_NAMES = { pytorch: 'PyTorch', tensorflow: 'TensorFlow' };
+const FRAMEWORK_NAMES = { pytorch: 'PyTorch', tensorflow: 'TensorFlow', nnunet: 'nnU-Net' };
 function refreshHeader() {
   api('/api/info').then(i => {
     $('#device').textContent = FRAMEWORK_NAMES[i.framework] + (i.device ? ' · ' + i.device : '');

@@ -1,6 +1,6 @@
-// Data tab: import a folder (imgs/ + masks/, or images only), list datasets.
-const IMG_DIRS = ['imgs', 'img', 'images', 'image'];
-const MASK_DIRS = ['masks', 'mask', 'labels', 'label', 'annotations', 'gt'];
+// Data tab: import a folder (2D: imgs/ + masks/, or images only; 3D: TIFF
+// volumes or folders of slices), list the 2D and 3D datasets.
+let dataMode = '2d';
 
 function classify(files) {
   const imgs = [], masks = [];
@@ -53,7 +53,20 @@ async function uploadToDataset(name, imgs, masks, progressEl) {
   return { ...fin, errors };
 }
 
+// 3D: send the files with their paths, then let the server build the volumes.
+async function uploadVolumes(name, entries, progressEl) {
+  const errors = await uploadBatches(`/api/volumes/${enc(name)}/files`, entries, progressEl);
+  setProgress(progressEl, 1, 1, 'Building the volumes…');
+  const fin = await api(`/api/volumes/${enc(name)}/finalize`, { method: 'POST' });
+  return { ...fin, errors: [...errors, ...fin.errors] };
+}
+
 async function importFolder(files) {
+  if (dataMode === '2d' && looksLike3d(files) &&
+      confirm('This folder holds sub-folders of slices in imgs/: they look like 3D volumes.\nImport them as 3D volumes (nnU-Net)?')) {
+    setDataMode('3d');
+  }
+  if (dataMode === '3d') return importVolumes(files);
   const { imgs, masks } = classify(files);
   if (!imgs.length) { toast('No image found in what was dropped', true); return; }
   let name = prompt(`${imgs.length} image(s), ${masks.length} mask(s).\nDataset name:`, guessName(files));
@@ -74,55 +87,107 @@ async function importFolder(files) {
   }
 }
 
+async function importVolumes(files, into = null) {
+  const entries = classify3d(files);
+  if (!entries.some(e => e.kind === 'img')) { toast('No volume found in what was dropped', true); return null; }
+  let name = into;
+  if (!name) {
+    const ni = entries.filter(e => e.kind === 'img').length, nm = entries.length - ni;
+    name = prompt(`${ni} image file(s), ${nm} label file(s).\nName of the 3D dataset:`, guessName(files));
+    if (!name) return null;
+    name = name.trim().replace(/[\/\\:*?"<>|]/g, '_');
+    if (VOLUME_SETS.some(d => d.name === name) && !confirm(`"${name}" exists: add these volumes to it?`)) return null;
+  }
+  const prog = $('#import-progress');
+  try {
+    const r = await uploadVolumes(name, entries, prog);
+    let msg = `"${name}": ${r.volumes} volume(s), ${r.paired} with labels, ${r.classes} class(es)`;
+    if (r.orphan_masks) msg += `, ${r.orphan_masks} label volume(s) without an image ignored`;
+    if (r.errors.length) msg += ` — ${r.errors.length} error(s): ${r.errors[0]}`;
+    toast(msg, r.errors.length > 0);
+    setProgress(prog, 1, 1, msg);
+    await refreshDatasets();
+    return r;
+  } catch (e) {
+    toast('Import failed: ' + e.message, true);
+    return null;
+  }
+}
+
+function setDataMode(m) {
+  dataMode = m;
+  $$('#data-mode button').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  $$('#data-drop .mode-2d').forEach(e => e.classList.toggle('hidden', m !== '2d'));
+  $$('#data-drop .mode-3d').forEach(e => e.classList.toggle('hidden', m !== '3d'));
+  try { localStorage.setItem('dataMode', m); } catch (e) {}
+}
+$$('#data-mode button').forEach(b => b.addEventListener('click', () => setDataMode(b.dataset.mode)));
+try { setDataMode(localStorage.getItem('dataMode') === '3d' ? '3d' : '2d'); } catch (e) { setDataMode('2d'); }
+
 setupDrop($('#data-drop'), importFolder);
 $('#data-pick').addEventListener('change', e => { importFolder(filesFromInput(e.target)); e.target.value = ''; });
+$('#data-pick-files').addEventListener('change', e => { importVolumes(filesFromInput(e.target)); e.target.value = ''; });
 
-function renderDatasets(list) {
+function datasetCard(d, is3d) {
+  const c = document.createElement('div');
+  c.className = 'card';
+  const what = is3d
+    ? `${d.count} volume${d.count === 1 ? '' : 's'} · ${d.annotated} annotated · ${d.classes.length} class${d.classes.length === 1 ? '' : 'es'}`
+    : `${d.count} images · ${d.annotated} annotated`;
+  c.innerHTML = `
+    <div class="title"></div>
+    <div class="muted small">${what}</div>
+    <div class="preview"></div>
+    <div class="row">
+      <button class="primary" data-a="open">Annotate</button>
+      <button data-a="train">Train</button>
+      <button data-a="rename">Rename</button>
+      <span class="spacer"></span>
+      <button class="danger" data-a="del">Delete</button>
+    </div>`;
+  $('.title', c).textContent = d.name + ' ';
+  $('.title', c).insertAdjacentHTML('beforeend', `<span class="tag">${is3d ? '3D · nnU-Net' : '2D · 512×512'}</span>`);
+  const base = is3d ? `/api/volumes/${enc(d.name)}` : `/api/datasets/${enc(d.name)}`;
+  api(`${base}/items`).then(r => {
+    const items = is3d ? r.items : r;
+    const pv = $('.preview', c);
+    for (const it of items.slice(0, 8)) {
+      const im = new Image();
+      im.loading = 'lazy';
+      im.src = is3d ? `${base}/thumb/${enc(it.name)}?size=128` : `${base}/image/${enc(it.name)}?size=128`;
+      if (is3d) im.title = `${it.name}: ${it.shape.join(' × ')}`;
+      pv.appendChild(im);
+    }
+  });
+  c.addEventListener('click', async e => {
+    const a = e.target.dataset.a;
+    if (a === 'open') {
+      showTab(is3d ? 'annotate3d' : 'annotate');
+      bus.emit(is3d ? 'open-volumes' : 'open-dataset', d.name);
+    }
+    if (a === 'train') { showTab('train'); bus.emit('train-dataset', (is3d ? '3d:' : '2d:') + d.name); }
+    if (a === 'rename') {
+      const n = prompt('New name:', d.name);
+      if (!n || n === d.name) return;
+      try { await api(`${base}/rename`, { method: 'POST', json: { new_name: n.trim() } }); refreshDatasets(); }
+      catch (err) { toast(err.message, true); }
+    }
+    if (a === 'del') {
+      const what = is3d ? `${d.count} volumes and their labels` : `${d.count} images and their masks`;
+      if (!confirm(`Permanently delete "${d.name}" (${what})?`)) return;
+      await api(base, { method: 'DELETE' });
+      refreshDatasets();
+    }
+  });
+  return c;
+}
+
+function renderDatasets() {
   const el = $('#dataset-list');
   el.innerHTML = '';
-  if (!list.length) { el.innerHTML = '<div class="empty">No dataset yet.</div>'; return; }
-  for (const d of list) {
-    const c = document.createElement('div');
-    c.className = 'card';
-    c.innerHTML = `
-      <div class="title"></div>
-      <div class="muted small">${d.count} images · ${d.annotated} annotated</div>
-      <div class="preview"></div>
-      <div class="row">
-        <button class="primary" data-a="open">Annotate</button>
-        <button data-a="train">Train</button>
-        <button data-a="rename">Rename</button>
-        <span class="spacer"></span>
-        <button class="danger" data-a="del">Delete</button>
-      </div>`;
-    $('.title', c).textContent = d.name;
-    api(`/api/datasets/${enc(d.name)}/items`).then(items => {
-      const pv = $('.preview', c);
-      for (const it of items.slice(0, 8)) {
-        const im = new Image();
-        im.loading = 'lazy';
-        im.src = `/api/datasets/${enc(d.name)}/image/${enc(it.name)}?size=128`;
-        pv.appendChild(im);
-      }
-    });
-    c.addEventListener('click', async e => {
-      const a = e.target.dataset.a;
-      if (a === 'open') { showTab('annotate'); bus.emit('open-dataset', d.name); }
-      if (a === 'train') { showTab('train'); bus.emit('train-dataset', d.name); }
-      if (a === 'rename') {
-        const n = prompt('New name:', d.name);
-        if (!n || n === d.name) return;
-        try { await api(`/api/datasets/${enc(d.name)}/rename`, { method: 'POST', json: { new_name: n.trim() } }); refreshDatasets(); }
-        catch (err) { toast(err.message, true); }
-      }
-      if (a === 'del') {
-        if (!confirm(`Permanently delete "${d.name}" (${d.count} images and their masks)?`)) return;
-        await api(`/api/datasets/${enc(d.name)}`, { method: 'DELETE' });
-        refreshDatasets();
-      }
-    });
-    el.appendChild(c);
-  }
+  if (!DATASETS.length && !VOLUME_SETS.length) { el.innerHTML = '<div class="empty">No dataset yet.</div>'; return; }
+  for (const d of DATASETS) el.appendChild(datasetCard(d, false));
+  for (const d of VOLUME_SETS) el.appendChild(datasetCard(d, true));
 }
 bus.on('datasets', renderDatasets);
 bus.on('tab', t => { if (t === 'data') refreshDatasets(); });

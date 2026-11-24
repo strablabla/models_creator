@@ -7,13 +7,13 @@ import shutil
 from pathlib import Path
 from typing import List
 
-from fastapi import Body, FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Body, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from PIL import Image
 from pydantic import BaseModel, Field
 
-from . import inference, settings, storage, sysinfo
+from . import inference, nnunet_backend, settings, storage, sysinfo, volumes
 from .training import pick_device, trainer
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
@@ -91,6 +91,8 @@ def datasets():
 async def upload_files(name: str, files: List[UploadFile] = File(...), kinds: List[str] = Form(...)):
     """One batch of a dropped folder. kinds[i] is 'img' or 'mask'."""
     _guard(storage.check_name, name)
+    if volumes.dataset_dir(name).exists():
+        raise HTTPException(409, f"A 3D dataset is already named {name!r}")
     if len(kinds) != len(files):
         raise HTTPException(400, "files/kinds")
     saved, errors = [], []
@@ -157,6 +159,105 @@ def delete_item(name: str, item: str):
     return {"ok": True}
 
 
+# ---------------- 3D datasets (nnU-Net) ----------------
+
+def _volume_response(arr):
+    return Response(volumes.packed(arr), media_type="application/octet-stream",
+                    headers={**NO_CACHE, "Content-Encoding": "gzip", "X-Shape": ",".join(map(str, arr.shape))})
+
+
+@app.get("/api/volumes")
+def volume_datasets():
+    return volumes.list_datasets()
+
+
+@app.post("/api/volumes/{name}/files")
+async def upload_volume_files(name: str, files: List[UploadFile] = File(...), kinds: List[str] = Form(...),
+                              paths: List[str] = Form(...)):
+    """One batch of a dropped folder. kinds[i] is 'img' or 'mask', paths[i]
+    the path under imgs/ (or masks/): vol1.tif, or vol1/slice_001.png..."""
+    _guard(storage.check_name, name)
+    if storage.dataset_dir(name).exists():
+        raise HTTPException(409, f"A 2D dataset is already named {name!r}")
+    if not (len(kinds) == len(files) == len(paths)):
+        raise HTTPException(400, "files/kinds/paths")
+    errors = []
+    for f, kind, rel in zip(files, kinds, paths):
+        try:
+            volumes.save_upload(name, kind, rel, await f.read())
+        except Exception as e:
+            errors.append(f"{f.filename}: {e}")
+    return {"errors": errors}
+
+
+@app.post("/api/volumes/{name}/finalize")
+def finalize_volumes(name: str):
+    return _guard(volumes.finalize, name)
+
+
+@app.delete("/api/volumes/{name}")
+def delete_volume_dataset(name: str):
+    _guard(volumes.delete_dataset, name)
+    return {"ok": True}
+
+
+@app.post("/api/volumes/{name}/rename")
+def rename_volume_dataset(name: str, new_name: str = Body(..., embed=True)):
+    if storage.dataset_dir(new_name).exists():
+        raise HTTPException(409, f"A 2D dataset is already named {new_name!r}")
+    _guard(volumes.rename_dataset, name, new_name)
+    return {"ok": True}
+
+
+@app.get("/api/volumes/{name}/items")
+def volume_items(name: str):
+    d = _guard(volumes.dataset_dir, name)
+    return {"items": _guard(volumes.list_items, name), "classes": volumes.read_meta(d)["classes"]}
+
+
+@app.put("/api/volumes/{name}/classes")
+def volume_classes(name: str, classes: list = Body(..., embed=True)):
+    return _guard(volumes.set_classes, name, classes)
+
+
+@app.get("/api/volumes/{name}/image/{item}")
+def volume_image(name: str, item: str):
+    d = _guard(volumes.dataset_dir, name)
+    return _volume_response(_guard(volumes.display_volume, d, item))
+
+
+@app.get("/api/volumes/{name}/labels/{item}")
+def volume_labels(name: str, item: str):
+    d = _guard(volumes.dataset_dir, name)
+    return _volume_response(_guard(volumes.labels, d, item))
+
+
+@app.get("/api/volumes/{name}/mesh/{item}")
+def volume_mesh(name: str, item: str):
+    """Surfaces of the saved labels, for the 3D view."""
+    d = _guard(volumes.dataset_dir, name)
+    return _guard(volumes.meshes, d, item)
+
+
+@app.put("/api/volumes/{name}/labels/{item}")
+async def put_volume_labels(name: str, item: str, request: Request):
+    body = await request.body()
+    _guard(volumes.write_labels, name, item, body, request.headers.get("content-encoding"))
+    return {"ok": True}
+
+
+@app.get("/api/volumes/{name}/thumb/{item}")
+def volume_thumb(name: str, item: str, size: int = 128):
+    d = _guard(volumes.dataset_dir, name)
+    return Response(_guard(volumes.thumbnail, d, item, size), media_type="image/png", headers=NO_CACHE)
+
+
+@app.delete("/api/volumes/{name}/items/{item}")
+def delete_volume_item(name: str, item: str):
+    _guard(volumes.delete_item, name, item)
+    return {"ok": True}
+
+
 # ---------------- training ----------------
 
 class TrainConfig(BaseModel):
@@ -171,7 +272,13 @@ class TrainConfig(BaseModel):
     augment: bool = True
     only_annotated: bool = True
     seed: int = 0
-    framework: str | None = None  # default: the one chosen in Settings
+    framework: str | None = None  # default: the one chosen in Settings; "nnunet" for a 3D dataset
+    # nnU-Net only
+    configuration: str = "3d_fullres"
+    iterations: int = Field(250, ge=1, le=10000)
+    val_iterations: int = Field(50, ge=1, le=10000)
+    sparse: bool = False           # slices without any label are ignored, not background
+    final_validation: bool = True  # Dice on the whole validation volumes at the end
 
 
 @app.post("/api/train")
@@ -202,6 +309,12 @@ def train_stop():
 def models():
     out = []
     for p in sorted(storage.list_model_files(), key=lambda p: -p.stat().st_mtime):
+        if p.suffix == storage.NNUNET:
+            try:
+                out.append(nnunet_backend.model_summary(p))
+            except Exception:
+                out.append({"name": p.stem, "file": p.name, "framework": "nnunet", "size_mb": None})
+            continue
         try:
             out.append(inference.model_summary(p))
         except Exception:
@@ -212,11 +325,23 @@ def models():
 
 @app.post("/api/models")
 async def upload_model(file: UploadFile = File(...)):
-    """A PyTorch (.pt, .pth) or Keras (.keras, .h5) model, checked by loading it."""
+    """A PyTorch (.pt, .pth) or Keras (.keras, .h5) model, or a zipped nnU-Net
+    model folder, checked by loading it."""
     stem = storage.clean_stem(file.filename)
     ext = Path(file.filename).suffix.lower()
+    if ext == ".zip":
+        tmp = storage.MODELS / f"{stem}.upload.zip"
+        with tmp.open("wb") as fh:
+            shutil.copyfileobj(file.file, fh)
+        try:
+            s = nnunet_backend.import_zip(stem, tmp)
+        except Exception as e:
+            raise HTTPException(400, f"This file is not a readable nnU-Net model: {e}")
+        finally:
+            tmp.unlink(missing_ok=True)
+        return {"name": stem, "kind": "nnU-Net", "framework": "nnunet", "summary": s}
     if ext not in storage.MODEL_EXTS:
-        raise HTTPException(400, "A .pt, .pth, .keras or .h5 file is needed")
+        raise HTTPException(400, "A .pt, .pth, .keras, .h5 file, or a .zip of an nnU-Net model, is needed")
     if ext == ".pth":
         ext = ".pt"
     tmp = storage.MODELS / f"{stem}.upload{ext}"
@@ -236,6 +361,9 @@ async def upload_model(file: UploadFile = File(...)):
 @app.get("/api/models/{name}/download")
 def download_model(name: str):
     p = _guard(storage.model_path, name)
+    if p.is_dir():
+        z = nnunet_backend.zip_model(p)
+        return FileResponse(z, filename=z.name, media_type="application/zip")
     return FileResponse(p, filename=p.name, media_type="application/octet-stream")
 
 
@@ -330,3 +458,69 @@ def session_to_dataset(sid: str, dataset: str = Body(..., embed=True)):
         mask.save(ds / "masks" / p.name)
         n += 1
     return {"added": n}
+
+
+# ---------------- 3D inference (nnU-Net) ----------------
+
+@app.post("/api/inference3d/sessions")
+def new_session3d():
+    return {"id": nnunet_backend.new_session()}
+
+
+@app.post("/api/inference3d/sessions/{sid}/files")
+async def session3d_files(sid: str, files: List[UploadFile] = File(...), paths: List[str] = Form(...)):
+    if len(paths) != len(files):
+        raise HTTPException(400, "files/paths")
+    for f, rel in zip(files, paths):
+        _guard(nnunet_backend.stage_file, sid, rel, await f.read())
+    return {"ok": True}
+
+
+@app.post("/api/inference3d/sessions/{sid}/run")
+def session3d_run(sid: str, model: str = Body(...), mirroring: bool = Body(False), again: bool = Body(False)):
+    return _guard(nnunet_backend.run_session, sid, model, mirroring, again)
+
+
+@app.get("/api/inference3d/sessions/{sid}")
+def session3d_state(sid: str):
+    return _guard(nnunet_backend.session_state, sid)
+
+
+@app.get("/api/inference3d/sessions/{sid}/image/{item}")
+def session3d_image(sid: str, item: str):
+    d = _guard(nnunet_backend.session_dir, sid)
+    return _volume_response(_guard(volumes.display_volume, d, item))
+
+
+@app.get("/api/inference3d/sessions/{sid}/labels/{item}")
+def session3d_labels(sid: str, item: str):
+    d = _guard(nnunet_backend.session_dir, sid)
+    return _volume_response(_guard(volumes.labels, d, item))
+
+
+@app.get("/api/inference3d/sessions/{sid}/mesh/{item}")
+def session3d_mesh(sid: str, item: str):
+    d = _guard(nnunet_backend.session_dir, sid)
+    return _guard(volumes.meshes, d, item)
+
+
+@app.get("/api/inference3d/sessions/{sid}/thumb/{item}")
+def session3d_thumb(sid: str, item: str, size: int = 128):
+    d = _guard(nnunet_backend.session_dir, sid)
+    return Response(_guard(volumes.thumbnail, d, item, size), media_type="image/png", headers=NO_CACHE)
+
+
+@app.get("/api/inference3d/sessions/{sid}/zip")
+def session3d_zip(sid: str):
+    data = _guard(nnunet_backend.zip_session, sid)
+    return Response(data, media_type="application/zip",
+                    headers={"Content-Disposition": f'attachment; filename="predictions3d_{sid}.zip"'})
+
+
+@app.post("/api/inference3d/sessions/{sid}/to_dataset")
+def session3d_to_dataset(sid: str, dataset: str = Body(..., embed=True)):
+    """Predicted labels become annotations to correct in Annotation 3D."""
+    _guard(storage.check_name, dataset)
+    if storage.dataset_dir(dataset).exists():
+        raise HTTPException(409, f"{dataset!r} is a 2D dataset")
+    return {"added": _guard(nnunet_backend.session_to_dataset, sid, dataset)}

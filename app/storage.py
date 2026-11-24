@@ -129,6 +129,20 @@ def save_uploaded_mask(name: str, filename: str, data: bytes) -> str:
     return stem
 
 
+def match_mask(cand: str, stems) -> str | None:
+    """The image name a mask name refers to: the same name, or the name with
+    _mask, _label... (or mask_ before it), ignoring case."""
+    if cand in stems:
+        return cand
+    lower = {s.lower(): s for s in stems}
+    low = cand.lower()
+    for suf in MASK_SUFFIXES:
+        for c in (low, low.removeprefix("mask_"), low.removeprefix("mask")):
+            if c.endswith(suf) and c[: -len(suf)] in lower:
+                return lower[c[: -len(suf)]]
+    return lower.get(low)
+
+
 def finalize(name: str):
     """Pair uploaded masks with images (same name, or name + _mask...), and
     give a black mask to every image that has none."""
@@ -140,23 +154,8 @@ def finalize(name: str):
     stems = {p.stem for p in imgs.glob("*.png")} if imgs.exists() else set()
     paired = orphans = 0
     if incoming.exists():
-        lower = {s.lower(): s for s in stems}
         for m in incoming.glob("*.png"):
-            target = None
-            cand = m.stem
-            if cand in stems:
-                target = cand
-            else:
-                low = cand.lower()
-                for suf in MASK_SUFFIXES:
-                    for c in (low, low.removeprefix("mask_"), low.removeprefix("mask")):
-                        if c.endswith(suf) and c[: -len(suf)] in lower:
-                            target = lower[c[: -len(suf)]]
-                            break
-                    if target:
-                        break
-                if not target and low in lower:
-                    target = lower[low]
+            target = match_mask(m.stem, stems)
             if target:
                 shutil.move(str(m), masks / f"{target}.png")
                 paired += 1
@@ -204,8 +203,10 @@ def rename_dataset(name: str, new: str):
 
 # ---------------- model files ----------------
 # PyTorch models: <name>.pt (or .pth); TensorFlow / Keras: <name>.keras (or .h5)
-# with their training information beside them in <name>.json.
+# with their training information beside them in <name>.json; nnU-Net (3D):
+# a folder <name>.nnunet/ (see nnunet_backend.py).
 MODEL_EXTS = (".pt", ".pth", ".keras", ".h5")
+NNUNET = ".nnunet"
 
 
 def model_path(name: str) -> Path:
@@ -214,6 +215,9 @@ def model_path(name: str) -> Path:
         p = MODELS / f"{name}{ext}"
         if p.exists():
             return p
+    p = MODELS / f"{name}{NNUNET}"
+    if (p / "plans.json").exists():
+        return p
     raise FileNotFoundError(name)
 
 
@@ -223,7 +227,8 @@ def model_meta_path(name: str) -> Path:
 
 def list_model_files():
     return [p for p in MODELS.iterdir()
-            if p.suffix in MODEL_EXTS and ".tmp." not in p.name and ".upload." not in p.name and p.is_file()]
+            if (p.suffix in MODEL_EXTS and ".tmp." not in p.name and ".upload." not in p.name and p.is_file())
+            or (p.suffix == NNUNET and (p / "plans.json").exists())]
 
 
 def remove_other_model_files(name: str, keep: Path):
@@ -232,10 +237,13 @@ def remove_other_model_files(name: str, keep: Path):
         p = MODELS / f"{name}{ext}"
         if p != keep:
             p.unlink(missing_ok=True)
-    if keep.suffix in (".pt", ".pth"):
+    if keep.suffix != NNUNET:
+        shutil.rmtree(MODELS / f"{name}{NNUNET}", ignore_errors=True)
+    if keep.suffix in (".pt", ".pth", NNUNET):
         model_meta_path(name).unlink(missing_ok=True)
 
 
 def delete_model(name: str):
     for ext in MODEL_EXTS + (".json",):
         (MODELS / f"{check_name(name)}{ext}").unlink(missing_ok=True)
+    shutil.rmtree(MODELS / f"{name}{NNUNET}", ignore_errors=True)

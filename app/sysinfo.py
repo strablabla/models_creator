@@ -19,6 +19,7 @@ _NO_WINDOW = {"creationflags": subprocess.CREATE_NO_WINDOW} if os.name == "nt" e
 LIBRARIES = [
     ("PyTorch", "torch"), ("torchvision", "torchvision"), ("TensorFlow", "tensorflow"),
     ("Keras", "keras"), ("JAX", "jax"), ("ONNX Runtime", "onnxruntime"),
+    ("nnU-Net", "nnunetv2"), ("SimpleITK", "simpleitk"), ("tifffile", "tifffile"),
     ("NumPy", "numpy"), ("Pillow", "pillow"), ("FastAPI", "fastapi"), ("Uvicorn", "uvicorn"),
 ]
 
