@@ -5,22 +5,37 @@
   const resEl = $('#inf-results');
 
   // ---------- model ----------
+  // An nnU-Net model switches the tab to volumes (infer3d.js shows them).
+  const is3dModel = name => (MODELS.find(m => m.name === name) || {}).framework === 'nnunet';
+  function applyMode() {
+    const is3d = is3dModel($('#inf-model').value);
+    $$('#tab-infer .only-2d').forEach(e => e.classList.toggle('hidden', is3d));
+    $$('#tab-infer .only-3d').forEach(e => e.classList.toggle('hidden', !is3d));
+    bus.emit('infer-mode', is3d);
+  }
   bus.on('models', list => {
-    fillSelect($('#inf-model'), list.map(m => ({ value: m.name, label: `${m.name} · ${FRAMEWORK_NAMES[m.framework] || ''}` + (m.best ? ` (recall ${fmtPct(m.best.val.recall)})` : '') })),
-      $('#inf-model').value, 'No model — train one or drop a .pt file');
+    fillSelect($('#inf-model'), list.map(m => ({
+      value: m.name,
+      label: m.framework === 'nnunet'
+        ? `${m.name} · nnU-Net 3D` + (m.best ? ` (Dice ${fmtPct(m.validation?.dice ?? m.best.val.ema_dice)})` : '')
+        : `${m.name} · ${FRAMEWORK_NAMES[m.framework] || ''}` + (m.best ? ` (recall ${fmtPct(m.best.val.recall)})` : ''),
+    })), $('#inf-model').value, 'No model — train one or drop a model file');
+    applyMode();
   });
-  bus.on('use-model', name => { $('#inf-model').value = name; });
+  bus.on('use-model', name => { $('#inf-model').value = name; applyMode(); });
   bus.on('tab', t => { if (t === 'infer') refreshModels(); });
 
   async function uploadModel(file) {
-    if (!/\.(pt|pth|keras|h5)$/i.test(file.name)) { toast('A .pt, .pth, .keras or .h5 file is needed', true); return; }
+    if (!/\.(pt|pth|keras|h5|zip)$/i.test(file.name)) { toast('A .pt, .pth, .keras, .h5 file, or the .zip of an nnU-Net model, is needed', true); return; }
     const fd = new FormData();
     fd.append('file', file, file.name);
-    toast(/\.(keras|h5)$/i.test(file.name) ? 'Loading the model (TensorFlow starts the first time: up to a minute)…' : 'Loading the model…');
+    toast(/\.(keras|h5)$/i.test(file.name) ? 'Loading the model (TensorFlow starts the first time: up to a minute)…'
+      : /\.zip$/i.test(file.name) ? 'Loading the nnU-Net model…' : 'Loading the model…');
     try {
       const r = await api('/api/models', { method: 'POST', body: fd });
       await refreshModels();
       $('#inf-model').value = r.name;
+      applyMode();
       toast(`Model "${r.name}" ready (${r.kind})`);
     } catch (e) { toast(e.message, true); }
   }
@@ -33,6 +48,7 @@
   async function run(files, append) {
     const model = $('#inf-model').value;
     if (!model) { toast('Choose or drop a model', true); return; }
+    if (is3dModel(model)) { bus.emit('infer3d-files', files); return; }
     files = files.filter(f => IMAGE_RE.test(f.path || f.file.name));
     if (!files.length) { toast('No image in what was dropped', true); return; }
     if (st.running) { toast('A prediction is already running', true); return; }
@@ -68,7 +84,10 @@
 
   setupDrop($('#img-drop'), files => run(files, true));
   $('#img-pick').addEventListener('change', e => { run(filesFromInput(e.target), true); e.target.value = ''; });
-  $('#inf-model').addEventListener('change', () => { if (st.files.length && confirm('Run the images again with this model?')) run([...st.files], false); });
+  $('#inf-model').addEventListener('change', () => {
+    applyMode();
+    if (!is3dModel($('#inf-model').value) && st.files.length && confirm('Run the images again with this model?')) run([...st.files], false);
+  });
   $('#inf-threshold').addEventListener('change', () => { if (st.files.length) run([...st.files], false); });
 
   // ---------- display ----------

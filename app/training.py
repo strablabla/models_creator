@@ -113,11 +113,13 @@ class Trainer:
         self.thread = None
         self.stop_flag = threading.Event()
         self.status = {"state": "idle", "message": "", "history": [], "config": None}
+        self.on_stop = None  # set by a training that must end a process (nnU-Net)
 
     def snapshot(self):
         with self.lock:
             s = dict(self.status)
             s["history"] = list(self.status.get("history", []))
+            s["log"] = list(self.status.get("log", []))[-80:]
             return s
 
     def set(self, **kw):
@@ -132,10 +134,19 @@ class Trainer:
         cfg = dict(cfg, framework=cfg.get("framework") or settings.get()["framework"])
         if cfg["framework"] == "tensorflow" and not tensorflow_installed():
             raise ValueError("TensorFlow is not installed")
+        if cfg["framework"] == "nnunet":
+            from . import nnunet_backend, volumes
+            if not nnunet_backend.installed():
+                raise ValueError("nnU-Net is not installed (run install.cmd again)")
+            if not volumes.dataset_dir(cfg["dataset"]).exists():
+                raise ValueError(f"No 3D dataset named {cfg['dataset']!r}")
+            if cfg.get("configuration") not in nnunet_backend.CONFIGURATIONS:
+                raise ValueError(f"configuration must be one of {', '.join(nnunet_backend.CONFIGURATIONS)}")
         self.stop_flag.clear()
         self.status = {
             "state": "starting",
-            "message": "Loading TensorFlow…" if cfg["framework"] == "tensorflow" else "Preparing…",
+            "message": {"tensorflow": "Loading TensorFlow…", "nnunet": "Preparing the nnU-Net dataset…"}.get(
+                cfg["framework"], "Preparing…"),
             "history": [], "config": cfg,
             "epoch": 0, "epochs": cfg["epochs"], "batch": 0, "batches": 0,
             "batch_loss": None, "started": time.time(), "best": None,
@@ -145,6 +156,8 @@ class Trainer:
 
     def stop(self):
         self.stop_flag.set()
+        if self.on_stop:
+            self.on_stop()
 
     @property
     def stopping(self):
@@ -157,6 +170,9 @@ class Trainer:
             self.set(state="error", message=f"Error: {e}")
 
     def _train(self, cfg):
+        if cfg["framework"] == "nnunet":
+            from .nnunet_backend import train
+            return train(self, cfg)
         ds_dir = storage.dataset_dir(cfg["dataset"])
         items = storage.list_items(cfg["dataset"])
         if cfg.get("only_annotated", True):

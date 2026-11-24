@@ -20,6 +20,7 @@
   <nav id="tabs">
     <button data-tab="data" class="active">Data</button>
     <button data-tab="annotate">Annotation</button>
+    <button data-tab="annotate3d">Annotation 3D</button>
     <button data-tab="train">Training</button>
     <button data-tab="infer">Inference</button>
     <button data-tab="info">Info</button>
@@ -31,11 +32,22 @@
 
 <!-- ======================= DATA ======================= -->
 <section id="tab-data" class="tab active">
+  <div class="row data-mode">
+    <div class="group seg" id="data-mode">
+      <button data-mode="2d" class="active">2D images · U-Net</button>
+      <button data-mode="3d">3D volumes · nnU-Net</button>
+    </div>
+  </div>
   <div class="drop big" id="data-drop">
     <div class="drop-title">Drop a folder here</div>
-    <div class="muted">It should contain <b>imgs/</b> and <b>masks/</b>, or images only
+    <div class="muted mode-2d">It should contain <b>imgs/</b> and <b>masks/</b>, or images only
       (black masks will be created).<br>Images are resized to 512×512.</div>
+    <div class="muted mode-3d hidden">Volumes: <b>multi-page TIFF</b> files, or <b>one folder of 2D slices per volume</b>
+      (PNG, TIFF…, in name order).<br>Put them in <b>imgs/</b> and their labels in <b>masks/</b> (same names, or
+      name_mask…), or drop volumes only (empty labels).<br>Labels: 0 = background, each other value is a class
+      (0/255 masks give one class). Volumes keep their size and their values (8 or 16 bits).</div>
     <label class="btn">Choose a folder…<input type="file" id="data-pick" webkitdirectory multiple hidden></label>
+    <label class="btn mode-3d hidden">Choose TIFF files…<input type="file" id="data-pick-files" accept=".tif,.tiff" multiple hidden></label>
   </div>
   <div id="import-progress" class="progress hidden"><div class="bar"></div><span></span></div>
   <h2>Datasets</h2>
@@ -103,6 +115,73 @@
   </div>
 </section>
 
+<!-- ======================= ANNOTATION 3D ======================= -->
+<section id="tab-annotate3d" class="tab">
+  <div class="annot">
+    <aside class="side">
+      <select id="a3-dataset"></select>
+      <div class="row small">
+        <label><input type="checkbox" id="a3-only-empty"> not annotated</label>
+        <span id="a3-count" class="muted"></span>
+      </div>
+      <div id="a3-list" class="thumbs"></div>
+      <div class="classes-box">
+        <div class="row"><b class="small">Classes</b><span class="spacer"></span>
+          <button id="a3-add-class" class="small" title="Add a class">+ Class</button></div>
+        <div id="a3-classes" class="classes"></div>
+        <label class="small" title="The brush paints only background (and its own class): other classes are kept"><input type="checkbox" id="a3-protect"> keep other classes</label>
+      </div>
+      <div class="drop small-drop" id="a3-drop">+ Drop volumes</div>
+    </aside>
+
+    <div class="editor-wrap">
+      <div class="toolbar">
+        <div class="group" id="a3-tools">
+          <button data-tool="brush" class="active" title="Brush (B), Shift = erase">✎ Brush</button>
+          <button data-tool="eraser" title="Eraser (E)">⌫ Eraser</button>
+          <button data-tool="fill" title="Fill (F): fills the clicked area of this slice, Shift = empty it">◧ Fill</button>
+          <button data-tool="pan" title="Pan (hold Space)">✥</button>
+        </div>
+        <div class="group seg" id="a3-axis" title="Viewing plane (V)">
+          <button data-axis="z" class="active" title="XY plane: slices along Z">XY</button>
+          <button data-axis="y" title="XZ plane: slices along Y">XZ</button>
+          <button data-axis="x" title="YZ plane: slices along X">YZ</button>
+          <button data-axis="3d" title="3D surfaces of the saved labels (T)">3D</button>
+        </div>
+        <div class="group">
+          <label title="Brush size ([ and ])">Size <input type="range" id="a3-size" min="1" max="120" value="12"><span id="a3-size-v">12</span></label>
+          <label>Opacity <input type="range" id="a3-opacity" min="0" max="100" value="50"></label>
+          <label title="Show the labels (H)"><input type="checkbox" id="a3-visible" checked> labels</label>
+          <label title="Outline only (O)"><input type="checkbox" id="a3-outline"> outline</label>
+        </div>
+        <div class="group">
+          <button id="a3-undo" title="Undo (Ctrl+Z)">↶</button>
+          <button id="a3-redo" title="Redo (Ctrl+Y)">↷</button>
+          <button id="a3-copy" title="Copy the labels of the previous slice onto this one (C); Shift = from the next slice">⧉ Copy slice</button>
+          <button id="a3-clear" title="Erase the labels of this slice">✕ Slice</button>
+          <button id="a3-fit" title="Fit to window (0)">⤢</button>
+          <button id="a3-save" class="primary" title="Save (Ctrl+S)">Save</button>
+        </div>
+      </div>
+      <div id="a3-stage" class="vstage"></div>
+      <div class="statusbar">
+        <button id="a3-prev" title="Previous volume (PageUp with Ctrl)">◀</button>
+        <span id="a3-name"></span>
+        <button id="a3-next" title="Next volume">▶</button>
+        <span id="a3-dirty" class="muted"></span>
+        <div class="slicer">
+          <input type="range" id="a3-slice" min="0" max="0" value="0" title="Slice (mouse wheel, ↑ ↓; Shift = 10 at a time)">
+          <canvas id="a3-strip" height="4" title="Slices holding labels"></canvas>
+        </div>
+        <span id="a3-slice-v" class="muted mono"></span>
+        <span class="spacer"></span>
+        <button id="a3-delete-item" class="danger" title="Remove this volume from the dataset">Delete volume</button>
+        <span class="muted" id="a3-pos"></span>
+      </div>
+    </div>
+  </div>
+</section>
+
 <!-- ======================= TRAINING ======================= -->
 <section id="tab-train" class="tab">
   <div class="train">
@@ -112,21 +191,30 @@
       <label>Dataset <select name="dataset" id="tr-dataset"></select></label>
       <label>Model name <input name="model_name" id="tr-name" required></label>
       <div class="two">
-        <label>Epochs <input type="number" name="epochs" value="30" min="1"></label>
-        <label>Batch size <input type="number" name="batch_size" value="4" min="1" max="64"></label>
+        <label>Epochs <input type="number" name="epochs" id="tr-epochs" value="30" min="1"></label>
+        <label class="only-2d">Batch size <input type="number" name="batch_size" value="4" min="1" max="64"></label>
+        <label class="only-3d hidden" title="nnU-Net plans the network for the volumes: 3d_fullres at their resolution, 2d slice by slice (faster), 3d_lowres downsampled (large volumes only)">Configuration
+          <select name="configuration"><option>3d_fullres</option><option>2d</option><option>3d_lowres</option></select></label>
+      </div>
+      <div class="two only-3d hidden">
+        <label title="nnU-Net: 250 batches per epoch">Iterations / epoch <input type="number" name="iterations" value="250" min="1" max="10000"></label>
+        <label title="nnU-Net: 50 validation batches per epoch">Val. iterations <input type="number" name="val_iterations" value="50" min="1" max="10000"></label>
       </div>
       <div class="two">
-        <label>Learning rate <input type="number" name="lr" value="0.001" step="0.0001" min="0.00001"></label>
+        <label class="only-2d">Learning rate <input type="number" name="lr" value="0.001" step="0.0001" min="0.00001"></label>
         <label>Validation split <input type="number" name="val_split" value="0.2" step="0.05" min="0" max="0.9"></label>
       </div>
-      <div class="two">
+      <div class="two only-2d">
         <label title="Filters of the first level, doubled at each level">Base filters
           <select name="base"><option>8</option><option selected>16</option><option>32</option><option>64</option></select></label>
         <label title="Number of downsamplings (4: 512 → 32)">Depth
           <select name="depth"><option>3</option><option selected>4</option><option>5</option></select></label>
       </div>
-      <label class="check"><input type="checkbox" name="augment" checked> Augmentation (rotations, flips, brightness)</label>
-      <label class="check"><input type="checkbox" name="only_annotated" checked> Annotated images only</label>
+      <label class="check only-2d"><input type="checkbox" name="augment" checked> Augmentation (rotations, flips, brightness)</label>
+      <label class="check"><input type="checkbox" name="only_annotated" checked> <span class="only-2d">Annotated images only</span><span class="only-3d hidden">Annotated volumes only</span></label>
+      <label class="check only-3d hidden" title="nnU-Net ignore label: the Z slices without any label are not learnt as background. For volumes annotated on some slices only."><input type="checkbox" name="sparse"> Slices without labels are not annotated (ignored)</label>
+      <label class="check only-3d hidden" title="At the end, nnU-Net predicts the whole validation volumes with the best model and computes their Dice"><input type="checkbox" name="final_validation" checked> Final validation on whole volumes</label>
+      <div class="note only-3d hidden small" id="tr-nnunet-note"></div>
       <div class="row">
         <button type="submit" class="primary" id="tr-start">Start</button>
         <button type="button" id="tr-stop" class="danger" disabled>Stop</button>
@@ -140,10 +228,11 @@
       <div class="metrics" id="tr-metrics"></div>
       <div class="charts">
         <div class="chart"><h3>Loss</h3><canvas id="ch-loss"></canvas></div>
-        <div class="chart"><h3>Accuracy</h3><canvas id="ch-accuracy"></canvas></div>
-        <div class="chart"><h3>Recall</h3><canvas id="ch-recall"></canvas></div>
+        <div class="chart"><h3 id="ch-accuracy-t">Accuracy</h3><canvas id="ch-accuracy"></canvas></div>
+        <div class="chart"><h3 id="ch-recall-t">Recall</h3><canvas id="ch-recall"></canvas></div>
       </div>
-      <div class="legend"><span class="sw train"></span> training <span class="sw val"></span> validation</div>
+      <div class="legend" id="tr-legend"><span class="sw train"></span> training <span class="sw val"></span> validation</div>
+      <details id="tr-log" class="hidden"><summary>nnU-Net log</summary><pre></pre></details>
     </div>
   </div>
   <h2>Models</h2>
@@ -156,19 +245,25 @@
     <div class="drop" id="model-drop">
       <div class="drop-title">1. Model</div>
       <select id="inf-model"></select>
-      <div class="muted">or drop a model file here<br><b>.pt</b> (PyTorch) · <b>.keras</b> / <b>.h5</b> (TensorFlow)</div>
-      <label class="btn">Choose a model…<input type="file" id="model-pick" accept=".pt,.pth,.keras,.h5" hidden></label>
+      <div class="muted">or drop a model file here<br><b>.pt</b> (PyTorch) · <b>.keras</b> / <b>.h5</b> (TensorFlow) · <b>.zip</b> (nnU-Net)</div>
+      <label class="btn">Choose a model…<input type="file" id="model-pick" accept=".pt,.pth,.keras,.h5,.zip" hidden></label>
     </div>
     <div class="drop" id="img-drop">
-      <div class="drop-title">2. Images to test</div>
-      <div class="muted">Drop images or a folder</div>
-      <label class="btn">Choose images…<input type="file" id="img-pick" accept="image/*,.tif,.tiff" multiple hidden></label>
-      <label class="small">Threshold <input type="range" id="inf-threshold" min="0.05" max="0.95" step="0.05" value="0.5"><span id="inf-threshold-v">0.50</span></label>
+      <div class="drop-title"><span class="only-2d">2. Images to test</span><span class="only-3d hidden">2. Volumes to test</span></div>
+      <div class="muted only-2d">Drop images or a folder</div>
+      <div class="muted only-3d hidden">Drop multi-page TIFF files, or folders of 2D slices (one per volume)</div>
+      <label class="btn only-2d">Choose images…<input type="file" id="img-pick" accept="image/*,.tif,.tiff" multiple hidden></label>
+      <div class="row only-3d hidden">
+        <label class="btn">Choose TIFF files…<input type="file" id="vol-pick" accept=".tif,.tiff" multiple hidden></label>
+        <label class="btn">Choose a folder of slices…<input type="file" id="vol-pick-dir" webkitdirectory multiple hidden></label>
+      </div>
+      <label class="small only-3d hidden" title="Also predicts the mirrored volumes and averages: a little more accurate, up to 8 times slower"><input type="checkbox" id="inf3d-mirror"> Test-time mirroring</label>
+      <label class="small only-2d">Threshold <input type="range" id="inf-threshold" min="0.05" max="0.95" step="0.05" value="0.5"><span id="inf-threshold-v">0.50</span></label>
     </div>
   </div>
   <div id="inf-progress" class="progress hidden"><div class="bar"></div><span></span></div>
 
-  <div class="view-bar">
+  <div class="view-bar only-2d">
     <div class="group seg" id="inf-mode">
       <button data-mode="mosaic" class="active">Mosaic</button>
       <button data-mode="column">Stacked</button>
@@ -187,7 +282,37 @@
     <button id="inf-to-ds" title="Copy images and predicted masks into a dataset, to correct them in Annotation">→ Dataset</button>
     <button id="inf-clear">Clear</button>
   </div>
-  <div id="inf-results" class="mosaic"></div>
+  <div id="inf-results" class="mosaic only-2d"></div>
+
+  <div id="inf3d" class="only-3d hidden">
+    <div class="view-bar">
+      <div class="group seg" id="inf3d-axis">
+        <button data-axis="z" class="active">XY</button><button data-axis="y">XZ</button><button data-axis="x">YZ</button><button data-axis="3d" title="3D surfaces of the predicted labels (T)">3D</button>
+      </div>
+      <label>Opacity <input type="range" id="inf3d-opacity" min="0" max="100" value="50"></label>
+      <label><input type="checkbox" id="inf3d-visible" checked> labels</label>
+      <label><input type="checkbox" id="inf3d-outline"> outline</label>
+      <span class="spacer"></span>
+      <span id="inf3d-count" class="muted"></span>
+      <button id="inf3d-again" title="Predict every volume again with the chosen model">Run again</button>
+      <button id="inf3d-zip">Download (zip)</button>
+      <button id="inf3d-to-ds" title="Copy volumes and predicted labels into a 3D dataset, to correct them in Annotation 3D">→ Dataset</button>
+      <button id="inf3d-clear">Clear</button>
+    </div>
+    <div class="inf3d-body">
+      <div id="inf3d-list" class="vol-list"></div>
+      <div class="inf3d-view">
+        <div id="inf3d-stage" class="vstage"></div>
+        <div class="statusbar">
+          <span id="inf3d-name"></span>
+          <div class="slicer"><input type="range" id="inf3d-slice" min="0" max="0" value="0"><canvas id="inf3d-strip" height="4"></canvas></div>
+          <span id="inf3d-slice-v" class="muted mono"></span>
+          <span class="spacer"></span>
+          <span id="inf3d-legend" class="legend3d"></span>
+        </div>
+      </div>
+    </div>
+  </div>
 </section>
 
 <!-- ======================= INFO ======================= -->
@@ -244,11 +369,16 @@
 </section>
 
 <div id="toast"></div>
+<script type="importmap">{ "imports": { "three": "/static/vendor/three/three.module.min.js" } }</script>
+<script type="module" src="/static/view3d.js"></script>
 <script src="/static/common.js"></script>
 <script src="/static/data.js"></script>
 <script src="/static/annotate.js"></script>
+<script src="/static/volume.js"></script>
+<script src="/static/annotate3d.js"></script>
 <script src="/static/train.js"></script>
 <script src="/static/infer.js"></script>
+<script src="/static/infer3d.js"></script>
 <script src="/static/info.js"></script>
 <script src="/static/settings.js"></script>
 </body>

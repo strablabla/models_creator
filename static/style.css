@@ -54,7 +54,7 @@ label { color: var(--muted); }
 .drop { border: 2px dashed var(--line); border-radius: 12px; padding: 22px; text-align: center;
   display: flex; flex-direction: column; gap: 10px; align-items: center; justify-content: center;
   transition: border-color .15s, background .15s; }
-.drop.big { min-height: 200px; }
+.drop.big { min-height: 200px; font-size: 14px; font-weight: 400; } /* not the .big of the Info tab */
 .drop.over { border-color: var(--accent); background: rgba(76, 141, 255, .08); }
 .drop-title { font-size: 18px; font-weight: 600; }
 
@@ -201,3 +201,59 @@ label { color: var(--muted); }
 .tag { font-size: 10px; font-weight: 600; padding: 1px 6px; border-radius: 4px; background: var(--panel2);
   color: var(--muted); border: 1px solid var(--line); vertical-align: middle; }
 a { color: var(--accent); }
+
+/* ---------- 3D: volume viewer, Annotation 3D, Inference 3D ---------- */
+#tab-annotate3d.active { display: flex; padding: 0; overflow: hidden; }
+.data-mode { margin-bottom: 10px; }
+.vstage { position: relative; flex: 1; overflow: hidden; min-height: 300px; cursor: none; background:
+  repeating-conic-gradient(var(--check1) 0% 25%, var(--check2) 0% 50%) 0 0 / 24px 24px; }
+.vstage.view { cursor: default; }
+.vstage.pan { cursor: grab; } .vstage.panning { cursor: grabbing; } .vstage.fillc { cursor: crosshair; }
+.vstage .vbox { position: absolute; left: 0; top: 0; transform-origin: 0 0; }
+.vstage .vbox canvas { display: block; width: 100%; height: 100%; box-shadow: 0 0 0 1px #000, 0 6px 30px #0008; }
+.vstage .vcursor { position: absolute; pointer-events: none; border: 1.5px solid #fff; border-radius: 50%;
+  box-shadow: 0 0 0 1px #000; transform: translate(-50%, -50%); display: none; }
+.vstage .vinfo { position: absolute; left: 8px; top: 8px; font-size: 11px; line-height: 1.5; padding: 2px 7px;
+  background: #000a; color: #fff; border-radius: 4px; pointer-events: none; font-variant-numeric: tabular-nums; }
+.vstage .vempty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); text-align: center; padding: 20px; }
+.slicer { display: flex; flex-direction: column; gap: 2px; flex: 0 1 340px; min-width: 120px; }
+.slicer input { width: 100%; }
+.slicer canvas { width: 100%; height: 4px; display: block; border-radius: 2px; background: var(--panel2); }
+.mono { font-variant-numeric: tabular-nums; }
+.classes-box { border-top: 1px solid var(--line); padding-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.classes { display: flex; flex-direction: column; gap: 2px; max-height: 230px; overflow: auto; }
+.cls { display: flex; align-items: center; gap: 6px; padding: 2px 5px; border-radius: 6px; cursor: pointer;
+  border: 1px solid transparent; }
+.cls.sel { border-color: var(--accent); background: var(--panel2); }
+.cls input[type=color] { width: 22px; height: 20px; flex: none; }
+.cls .k { font-size: 10px; color: var(--muted); width: 14px; text-align: right; flex: none; }
+.cls .n { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.cls button { padding: 0 6px; font-size: 11px; }
+.thumb .sub { position: absolute; left: 4px; top: 4px; font-size: 10px; padding: 0 4px; background: #000a;
+  color: #fff; border-radius: 3px; }
+.inf3d-body { display: flex; gap: 10px; height: calc(100vh - 400px); min-height: 380px; }
+.vol-list { width: 240px; flex: none; overflow: auto; display: flex; flex-direction: column; gap: 6px; }
+.vitem { display: flex; gap: 8px; padding: 6px; border: 1px solid var(--line); border-radius: 8px;
+  background: var(--panel); cursor: pointer; align-items: center; }
+.vitem.sel { border-color: var(--accent); }
+.vitem img { width: 48px; height: 48px; object-fit: cover; border-radius: 4px; background: #000; flex: none; }
+.vitem .t { font-size: 12px; font-weight: 600; word-break: break-all; }
+.vitem .s { font-size: 11px; color: var(--muted); }
+.vitem .s.err { color: var(--danger); }
+.inf3d-view { flex: 1; display: flex; flex-direction: column; min-width: 0; border: 1px solid var(--line);
+  border-radius: 8px; overflow: hidden; }
+.legend3d { display: flex; gap: 10px; font-size: 12px; flex-wrap: wrap; }
+.legend3d i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 4px; vertical-align: -1px; }
+#tr-log { margin-top: 10px; font-size: 12px; }
+#tr-log summary { cursor: pointer; color: var(--muted); }
+#tr-log pre { max-height: 280px; overflow: auto; font-size: 11px; background: var(--panel2); padding: 8px;
+  border-radius: 6px; white-space: pre-wrap; margin: 6px 0 0; }
+
+/* 3D surfaces (view3d.js) over the slice view */
+.v3d { position: absolute; inset: 0; z-index: 3; background: var(--bg); cursor: grab; }
+.v3d:active { cursor: grabbing; }
+.v3d canvas { display: block; }
+.v3d-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  color: var(--muted); pointer-events: none; }
+.v3d-help { position: absolute; left: 8px; bottom: 6px; font-size: 11px; color: var(--muted); pointer-events: none; }
